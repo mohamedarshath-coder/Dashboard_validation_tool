@@ -1,7 +1,0 @@
-# Dashboard Validation Framework — extra dependencies
-# PySpark and Python standard library are provided by Databricks.
-# Install these on the cluster or via %pip in validator.ipynb.
-
-pyyaml>=6.0
-anthropic>=0.40.0
-requests>=2.31.0
