@@ -85,16 +85,19 @@ class ValidationEngine:
 
         # 2 — Per-metric: reconciliation + trend_sanity
         for metric_cfg in reg.get("metrics", []):
-            metric        = metric_cfg["name"]
-            tolerance_pct = float(str(metric_cfg.get("tolerance_pct", 1.0)).rstrip("%"))
-            check_types   = metric_cfg.get("checks", ["reconciliation"])
+            metric             = metric_cfg["name"]
+            tolerance_pct      = float(str(metric_cfg.get("tolerance_pct", 1.0)).rstrip("%"))
+            check_types        = metric_cfg.get("checks", ["reconciliation"])
+            recompute_sql      = metric_cfg.get("recompute_sql", "")
+            metric_source      = metric_cfg.get("source_table", source_table)
 
             if "reconciliation" in check_types and checks_cfg.get("reconciliation", {}).get("enabled", True):
                 print(f"[engine] Running: reconciliation / {metric}")
                 results.append(
                     run_reconciliation_check(
-                        self.spark, dashboard_table, source_table,
+                        self.spark, dashboard_table, metric_source,
                         metric, run_week, tolerance_pct, date_column, row_filter,
+                        recompute_sql,
                     )
                 )
 
@@ -115,11 +118,13 @@ class ValidationEngine:
                 if "reconciliation" in metric_cfg.get("checks", []):
                     metric        = metric_cfg["name"]
                     tolerance_pct = float(str(metric_cfg.get("tolerance_pct", 1.0)).rstrip("%"))
+                    metric_source = metric_cfg.get("source_table", source_table)
                     print(f"[engine] Running: parts_sum / {metric} by {pivot_col}")
                     results.append(
                         run_parts_sum_check(
                             self.spark, dashboard_table, source_table,
-                            metric, run_week, pivot_col, tolerance_pct, date_column, row_filter,
+                            metric, run_week, pivot_col, tolerance_pct, date_column,
+                            row_filter, metric_source,
                         )
                     )
 

@@ -111,8 +111,13 @@ def run_reconciliation_check(
     tolerance_pct: float,
     date_column: str = "fiscal_yr_and_wk_desc",
     row_filter: str = "",
+    recompute_sql: str = "",
 ) -> CheckResult:
-    """Dashboard SUM(metric) must match source SUM(metric) within tolerance_pct."""
+    """Dashboard SUM(metric) must match source SUM(metric) within tolerance_pct.
+
+    If recompute_sql is provided, it is used to compute the source value instead
+    of SUM(metric) from source_table. Use {run_week} as a placeholder in the SQL.
+    """
     week_filter = _where(date_column, run_week, row_filter)
 
     dashboard_val = _scalar(spark, f"""
@@ -121,11 +126,15 @@ def run_reconciliation_check(
         WHERE {week_filter}
     """) or 0.0
 
-    source_val = _scalar(spark, f"""
-        SELECT COALESCE(SUM({metric}), 0)
-        FROM {source_table}
-        WHERE {week_filter}
-    """) or 0.0
+    if recompute_sql:
+        sql = recompute_sql.replace("{run_week}", run_week).replace("{run_date}", run_week)
+        source_val = _scalar(spark, sql) or 0.0
+    else:
+        source_val = _scalar(spark, f"""
+            SELECT COALESCE(SUM({metric}), 0)
+            FROM {source_table}
+            WHERE {week_filter}
+        """) or 0.0
 
     if source_val == 0 and dashboard_val == 0:
         return CheckResult(
@@ -168,7 +177,10 @@ def run_parts_sum_check(
     tolerance_pct: float,
     date_column: str = "fiscal_yr_and_wk_desc",
     row_filter: str = "",
+    metric_source_table: str = "",
 ) -> CheckResult:
+    # metric_source_table overrides source_table for this specific metric
+    source_table = metric_source_table or source_table
     """Each pivot_column subtotal in dashboard must match the source subtotal."""
     week_filter = _where(date_column, run_week, row_filter)
 
