@@ -62,10 +62,10 @@ def run_triage(run_result: Dict, api_key: Optional[str] = None) -> str:
 
     try:
         import anthropic
-    except ImportError:
+    except (ImportError, TypeError) as e:
         return (
-            "[triage] anthropic package not installed. "
-            "Run: pip install anthropic  then re-run the job."
+            f"[triage] Could not import anthropic ({e}). "
+            "Run: pip install anthropic typing_extensions --upgrade"
         )
 
     resolved_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
