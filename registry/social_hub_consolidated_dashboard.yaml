@@ -15,6 +15,7 @@ dashboard_table: socialmedia.social_hub_consolidated_dashboard
 source_table:    socialmedia.social_media_consolidated_silver
 date_column:     fiscal_yr_and_wk_desc
 date_format:     "YYYY-WW"
+row_filter:      "data_type != 'Budget' OR data_type IS NULL"
 
 # ── Metrics ─────────────────────────────────────────────────────────────────
 # tolerance_pct : max acceptable gap between dashboard value and source value.
