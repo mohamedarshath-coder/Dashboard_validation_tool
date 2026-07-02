@@ -12,52 +12,59 @@ description: >
   channels for Adobe Creative Cloud social media performance.
 
 dashboard_table: socialmedia.social_hub_consolidated_dashboard
-source_table:    socialmedia.social_media_consolidated_silver
-date_column:     fiscal_yr_and_wk_desc
-date_format:     "YYYY-WW"
-row_filter:      "data_type != 'Budget' OR data_type IS NULL"
+source_tables:
+  - socialmedia.social_media_consolidated_silver
 
-# ── Metrics ─────────────────────────────────────────────────────────────────
-# tolerance_pct : max acceptable gap between dashboard value and source value.
-# checks        : which check types to run for this metric.
-#   reconciliation — dashboard total ≈ source total
-#   trend_sanity   — week-over-week change within bounds
+date_column:  fiscal_yr_and_wk_desc
+date_format:  "YYYY-WW"
+row_filter:   "data_type != 'Budget' OR data_type IS NULL"
+
+# ── Metrics ───────────────────────────────────────────────────────────────────
+# tolerance      : max acceptable gap between dashboard and source (use % suffix)
+# dimensions     : which dimension columns to use for parts_sum and completeness
+# checks         : freshness | reconciliation | parts_sum | trend | completeness
 # ─────────────────────────────────────────────────────────────────────────────
+
 metrics:
 
   - name: impressions
-    tolerance_pct: 1.0
-    checks: [reconciliation, trend_sanity]
+    tolerance: 1.0%
+    dimensions: [platform, data_type]
+    checks: [reconciliation, parts_sum, trend, completeness]
 
   - name: engagements
-    tolerance_pct: 1.0
-    checks: [reconciliation, trend_sanity]
+    tolerance: 1.0%
+    dimensions: [platform, data_type]
+    checks: [reconciliation, parts_sum, trend, completeness]
 
   - name: spend
-    tolerance_pct: 1.0
-    checks: [reconciliation, trend_sanity]
+    tolerance: 1.0%
+    dimensions: [platform]
+    checks: [reconciliation, parts_sum, trend]
 
   - name: video_views
-    tolerance_pct: 2.0
-    checks: [reconciliation, trend_sanity]
+    tolerance: 2.0%
+    dimensions: [platform]
+    checks: [reconciliation, parts_sum, trend]
 
   - name: clicks_all
-    tolerance_pct: 1.5
-    checks: [reconciliation]
+    tolerance: 1.5%
+    dimensions: [platform]
+    checks: [reconciliation, parts_sum]
 
   - name: likes
-    tolerance_pct: 2.0
-    checks: [reconciliation]
+    tolerance: 2.0%
+    dimensions: [platform]
+    checks: [reconciliation, parts_sum]
 
-# ── Dimensions ──────────────────────────────────────────────────────────────
-# completeness_check : verify all expected_values appear each week.
-# expected_values    : the full set of dimension values the dashboard must have.
-#                      Missing values → DRIFT (1 missing) or FAIL (2+).
+# ── Dimensions ────────────────────────────────────────────────────────────────
+# expected_values  : full set of values the dashboard must have each week.
+#                    Referenced by metrics[].dimensions above.
 # ─────────────────────────────────────────────────────────────────────────────
+
 dimensions:
 
   - name: platform
-    completeness_check: true
     expected_values:
       - LinkedIn
       - Instagram
@@ -69,35 +76,31 @@ dimensions:
       - Threads
 
   - name: data_type
-    completeness_check: true
     expected_values:
       - Paid
       - Organic
       - Earned
       - Influencer
 
-# ── Check Configuration ─────────────────────────────────────────────────────
+# ── Check Configuration ───────────────────────────────────────────────────────
+# Global switches — each check type still needs enabled: true here.
+# Per-metric dimensions + checks list above control what actually runs.
+# ─────────────────────────────────────────────────────────────────────────────
+
 checks:
 
   freshness:
     enabled: true
-    # Fail if MAX(date_column) in dashboard != run_week
 
   reconciliation:
     enabled: true
-    # Dashboard SUM(metric) ≈ source SUM(metric) within tolerance_pct
 
   parts_sum:
     enabled: true
-    pivot_column: platform
-    # Each platform's dashboard subtotal ≈ source subtotal within metric tolerance
 
   trend_sanity:
     enabled: true
     max_wow_change_pct: 50.0
-    # |week-over-week change| <= max_wow_change_pct → PASS
-    # up to 1.5x → DRIFT, above 1.5x → FAIL
 
   completeness:
     enabled: true
-    # Every expected dimension value must appear in the current week's data

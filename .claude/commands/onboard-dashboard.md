@@ -145,40 +145,43 @@ Once you have all the information, generate the complete YAML registry.
 **Metrics section**
 - Include only metrics you can confirm exist in the source table
   (either seen in screenshot AND confirmed by user, or user explicitly named them)
-- Set `tolerance_pct` based on these defaults:
-  - Currency / spend: `0.5`
-  - Stable counts (users, accounts, sessions): `0.5`
-  - Large impression/reach counts: `1.0`
-  - Engagement metrics (likes, comments, shares): `1.5`
-  - Volatile metrics (video_views, story_views): `2.0`
-  - Rates / percentages: `3.0`
-- Add `trend_sanity` check only for metrics that are tracked weekly as KPIs
-  (skip it for ratio/rate metrics — WoW change on rates is rarely meaningful)
+- Set `tolerance` using the `%` suffix based on these defaults:
+  - Currency / spend: `0.5%`
+  - Stable counts (users, accounts, sessions): `0.5%`
+  - Large impression/reach counts: `1.0%`
+  - Engagement metrics (likes, comments, shares): `1.5%`
+  - Volatile metrics (video_views, story_views): `2.0%`
+  - Rates / percentages: `3.0%`
+- Set `dimensions` per metric — the list of dimension column names used for
+  parts_sum and completeness on that metric.
+  - Include only dimensions that are meaningful for that specific metric.
+  - Example: `dimensions: [platform, region]`
+- Set `checks` per metric using the canonical names:
+  `freshness | reconciliation | parts_sum | trend | completeness`
+  - Add `trend` only for metrics tracked weekly as KPIs (skip for ratio/rate metrics)
+  - Add `freshness` only on the first metric (it checks the whole dashboard table once)
+  - Add `completeness` only when the metric has at least one dimension with `expected_values`
 - Add a YAML comment on any metric where you are less than 100% confident
   about the column name: `# VERIFY: confirm column name in source table`
 
 **Dimensions section**
-- Only include a dimension in `expected_values` if you are confident the value
-  appears EVERY period (not just sometimes)
-- If you saw values in a screenshot but are unsure about completeness,
-  add a comment: `# VERIFY: confirm this is the complete list`
-- If a dimension is shown in the dashboard but values are unknown,
-  include it with `completeness_check: false` and a comment to fill in later
+- Each entry provides `name` and `expected_values` — a full list of values
+  that must appear each period (referenced by metrics via `dimensions: [name]`).
+- Only list values you are confident appear EVERY period (not just sometimes).
+- If values are unsure, add a comment: `# VERIFY: confirm this is the complete list`
+- If a dimension is shown in the dashboard but values are unknown, omit it
+  from `dimensions:` for now and add a comment to fill in later.
 
 **Row exclusion filter**
 - If the user confirmed a row exclusion (e.g. `data_type != 'Budget'`),
-  add a `row_filter` field to the YAML:
+  add a top-level `row_filter` field:
   ```yaml
   row_filter: "data_type != 'Budget'"
   ```
-  Note: checks.py uses `_NON_BUDGET` constant by default. If a different filter is
-  needed, the user will need to update checks.py — flag this in the YAML as a comment.
 
-**Checks section**
-- Enable all 5 checks by default
-- Set `parts_sum.pivot_column` to the primary breakdown dimension
-  (the one with the most visible slices in the screenshot)
-- Set `trend_sanity.max_wow_change_pct`:
+**Checks section** (global switches — always include this block)
+- Enable all 5 checks.
+- `trend_sanity.max_wow_change_pct`:
   - Stable dashboards: `30.0`
   - Normal dashboards: `50.0`
   - Volatile / seasonal dashboards: `100.0`
@@ -195,19 +198,51 @@ description: >
   [One-line description of what this dashboard shows and who uses it]
 
 dashboard_table: [schema.table_name]
-source_table:    [schema.source_table_name]
-date_column:     [column_name]
-date_format:     "[YYYY-WW or YYYY-MM-DD etc.]"
+source_tables:
+  - [schema.source_table_name]   # add more tables if the dashboard joins multiple sources
+
+date_column:  [column_name]
+date_format:  "[YYYY-WW or YYYY-MM-DD etc.]"
 
 # row_filter: "[optional: e.g. data_type != 'Budget']"   # uncomment if needed
 
+# ── Metrics ──────────────────────────────────────────────────────────────────
+# tolerance  : max acceptable gap (use % suffix, e.g. 1.0%)
+# dimensions : dimension columns used for parts_sum and completeness
+# checks     : freshness | reconciliation | parts_sum | trend | completeness
+# recompute_sql (optional): custom SQL to calculate source value for reconciliation
+#   Use {run_week} as a placeholder for the current period.
+# ─────────────────────────────────────────────────────────────────────────────
 metrics:
-  [one entry per metric]
 
+  - name: [metric_column_name]
+    tolerance: [0.5% or 1.0% or 2.0%]
+    dimensions: [[dim1, dim2]]
+    checks: [freshness, reconciliation, parts_sum, trend, completeness]
+
+  # - name: [derived_metric]   # use recompute_sql for metrics not stored as-is
+  #   tolerance: 2.0%
+  #   dimensions: [region]
+  #   recompute_sql: >
+  #     SELECT SUM(numerator) / SUM(denominator)
+  #     FROM [source_table]
+  #     WHERE [date_column] = '{run_week}'
+  #   checks: [reconciliation, trend]
+
+# ── Dimensions ────────────────────────────────────────────────────────────────
+# expected_values : referenced by metrics[].dimensions above.
+# ─────────────────────────────────────────────────────────────────────────────
 dimensions:
-  [one entry per dimension with completeness_check: true]
 
+  - name: [dim_column_name]
+    expected_values:
+      - [value1]
+      - [value2]
+      # VERIFY: confirm this is the complete list
+
+# ── Check Configuration ───────────────────────────────────────────────────────
 checks:
+
   freshness:
     enabled: true
 
@@ -216,7 +251,6 @@ checks:
 
   parts_sum:
     enabled: true
-    pivot_column: [primary dimension column]
 
   trend_sanity:
     enabled: true

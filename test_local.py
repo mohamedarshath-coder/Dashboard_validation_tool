@@ -57,7 +57,9 @@ def t_yaml_loads():
         reg = yaml.safe_load(f)
     assert "dashboard" in reg,       "Missing 'dashboard' key"
     assert "dashboard_table" in reg, "Missing 'dashboard_table' key"
-    assert "source_table" in reg,    "Missing 'source_table' key"
+    # Accept both old-style (source_table) and new-style (source_tables list)
+    has_source = "source_table" in reg or "source_tables" in reg
+    assert has_source, "Missing 'source_table' or 'source_tables' key"
     assert "metrics" in reg,         "Missing 'metrics' key"
     assert len(reg["metrics"]) > 0,  "metrics list is empty"
 
@@ -69,13 +71,15 @@ def t_yaml_metrics():
     with open(REGISTRY_PATH) as f:
         reg = yaml.safe_load(f)
     for m in reg["metrics"]:
-        assert "name" in m,          f"Metric missing 'name': {m}"
-        assert "tolerance_pct" in m, f"Metric '{m['name']}' missing 'tolerance_pct'"
-        assert "checks" in m,        f"Metric '{m['name']}' missing 'checks'"
+        assert "name" in m, f"Metric missing 'name': {m}"
+        # Accept both new-style (tolerance: 1.0%) and old-style (tolerance_pct: 1.0)
+        has_tol = "tolerance" in m or "tolerance_pct" in m
+        assert has_tol, f"Metric '{m['name']}' missing 'tolerance' or 'tolerance_pct'"
+        assert "checks" in m, f"Metric '{m['name']}' missing 'checks'"
     metric_names = [m["name"] for m in reg["metrics"]]
     print(f"         Metrics defined: {metric_names}")
 
-check("All YAML metrics have name, tolerance_pct, checks", t_yaml_metrics)
+check("All YAML metrics have name, tolerance or tolerance_pct, checks", t_yaml_metrics)
 
 # ── Test 4: CheckResult dataclass ────────────────────────────────────────────
 def t_check_result():
@@ -214,17 +218,30 @@ check("Triage prompt builder includes dashboard, week, and failing check details
 def t_engine_yaml_load():
     import yaml
     from pathlib import Path
-    # Replicate the YAML loading part of ValidationEngine without instantiating Spark
     path = Path(REGISTRY_PATH)
     assert path.exists(), f"Registry file not found: {REGISTRY_PATH}"
     with open(path) as f:
         reg = yaml.safe_load(f)
     assert reg["dashboard"] == "social_hub_consolidated_dashboard"
     assert reg["dashboard_table"].startswith("socialmedia.")
-    assert reg["source_table"].startswith("socialmedia.")
+    # Accept both source_table (old) and source_tables (new list)
+    if "source_tables" in reg:
+        assert isinstance(reg["source_tables"], list) and len(reg["source_tables"]) > 0
+        assert reg["source_tables"][0].startswith("socialmedia.")
+        src_display = reg["source_tables"][0]
+    else:
+        assert reg["source_table"].startswith("socialmedia.")
+        src_display = reg["source_table"]
     print(f"         Dashboard table : {reg['dashboard_table']}")
-    print(f"         Source table    : {reg['source_table']}")
+    print(f"         Source table    : {src_display}")
     print(f"         Metrics         : {[m['name'] for m in reg['metrics']]}")
+    # Validate new-style metrics if present
+    for m in reg["metrics"]:
+        tol_raw = m.get("tolerance", m.get("tolerance_pct", "1.0"))
+        tol = float(str(tol_raw).rstrip("%"))
+        checks = ["trend_sanity" if c == "trend" else c for c in m.get("checks", [])]
+        assert all(c in ("freshness","reconciliation","parts_sum","trend_sanity","completeness")
+                   for c in checks), f"Unknown check type in metric {m['name']}: {checks}"
 
 check("ValidationEngine: YAML parses correctly with correct table names", t_engine_yaml_load)
 
