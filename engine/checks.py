@@ -48,6 +48,14 @@ class CheckResult:
 _NON_BUDGET = "(data_type != 'Budget' OR data_type IS NULL)"
 
 
+def _where(date_column: str, run_week: str, row_filter: str = "") -> str:
+    """Build a WHERE clause from date filter + optional row filter."""
+    clause = f"{date_column} = '{run_week}'"
+    if row_filter:
+        clause += f" AND {row_filter}"
+    return clause
+
+
 def _scalar(spark, sql: str) -> Any:
     """Return the single value from a single-row, single-column query."""
     rows = spark.sql(sql).collect()
@@ -73,12 +81,14 @@ def run_freshness_check(
     dashboard_table: str,
     expected_week: str,
     date_column: str = "fiscal_yr_and_wk_desc",
+    row_filter: str = "",
 ) -> CheckResult:
     """Fail if the latest date in the dashboard does not equal expected_week."""
+    extra = f" AND {row_filter}" if row_filter else ""
     latest_week = _scalar(spark, f"""
         SELECT MAX({date_column})
         FROM {dashboard_table}
-        WHERE {_NON_BUDGET}
+        WHERE 1=1{extra}
     """)
 
     status = Status.PASS if latest_week == expected_week else Status.FAIL
@@ -100,9 +110,10 @@ def run_reconciliation_check(
     run_week: str,
     tolerance_pct: float,
     date_column: str = "fiscal_yr_and_wk_desc",
+    row_filter: str = "",
 ) -> CheckResult:
     """Dashboard SUM(metric) must match source SUM(metric) within tolerance_pct."""
-    week_filter = f"{date_column} = '{run_week}' AND {_NON_BUDGET}"
+    week_filter = _where(date_column, run_week, row_filter)
 
     dashboard_val = _scalar(spark, f"""
         SELECT COALESCE(SUM({metric}), 0)
@@ -156,9 +167,10 @@ def run_parts_sum_check(
     pivot_column: str,
     tolerance_pct: float,
     date_column: str = "fiscal_yr_and_wk_desc",
+    row_filter: str = "",
 ) -> CheckResult:
     """Each pivot_column subtotal in dashboard must match the source subtotal."""
-    week_filter = f"{date_column} = '{run_week}' AND {_NON_BUDGET}"
+    week_filter = _where(date_column, run_week, row_filter)
 
     dash_rows = spark.sql(f"""
         SELECT {pivot_column}, COALESCE(SUM({metric}), 0) AS total
@@ -213,20 +225,19 @@ def run_trend_sanity_check(
     prev_week: str,
     max_wow_change_pct: float,
     date_column: str = "fiscal_yr_and_wk_desc",
+    row_filter: str = "",
 ) -> CheckResult:
     """Week-over-week change must be within max_wow_change_pct."""
-    non_budget_filter = _NON_BUDGET
-
     current_val = _scalar(spark, f"""
         SELECT COALESCE(SUM({metric}), 0)
         FROM {dashboard_table}
-        WHERE {date_column} = '{run_week}' AND {non_budget_filter}
+        WHERE {_where(date_column, run_week, row_filter)}
     """) or 0.0
 
     prev_val = _scalar(spark, f"""
         SELECT COALESCE(SUM({metric}), 0)
         FROM {dashboard_table}
-        WHERE {date_column} = '{prev_week}' AND {non_budget_filter}
+        WHERE {_where(date_column, prev_week, row_filter)}
     """) or 0.0
 
     if float(prev_val) == 0:
@@ -267,12 +278,13 @@ def run_completeness_check(
     expected_values: List[str],
     run_week: str,
     date_column: str = "fiscal_yr_and_wk_desc",
+    row_filter: str = "",
 ) -> CheckResult:
     """Every value in expected_values must appear in the current week's data."""
     present_rows = spark.sql(f"""
         SELECT DISTINCT {dimension}
         FROM {dashboard_table}
-        WHERE {date_column} = '{run_week}' AND {_NON_BUDGET}
+        WHERE {_where(date_column, run_week, row_filter)}
     """).collect()
 
     present = {r[dimension] for r in present_rows}

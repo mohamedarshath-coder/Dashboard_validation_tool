@@ -34,13 +34,17 @@ class ValidationEngine:
     # ── helpers ──────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _prev_week(run_week: str) -> str:
-        """Return the fiscal week immediately before run_week (YYYY-WW format).
+    def _prev_week(run_week: str, date_format: str = "YYYY-WW") -> str:
+        """Return the period immediately before run_week.
 
-        For week 01, rolls back to week 52 of the previous year. This is an
-        approximation — some years have 53 weeks. For edge cases the trend
-        check will find no data and skip gracefully.
+        Handles both YYYY-WW (fiscal week) and YYYY-MM-DD (calendar date).
+        For YYYY-MM-DD, returns the date exactly 7 days earlier.
         """
+        if date_format == "YYYY-MM-DD":
+            from datetime import datetime, timedelta
+            d = datetime.strptime(run_week, "%Y-%m-%d")
+            return (d - timedelta(days=7)).strftime("%Y-%m-%d")
+        # Default: YYYY-WW fiscal week
         year, week = map(int, run_week.split("-"))
         if week <= 1:
             return f"{year - 1}-52"
@@ -65,8 +69,10 @@ class ValidationEngine:
         dashboard_table = reg["dashboard_table"]
         source_table    = reg["source_table"]
         date_column     = reg.get("date_column", "fiscal_yr_and_wk_desc")
+        date_format     = reg.get("date_format", "YYYY-WW").strip('"')
+        row_filter      = reg.get("row_filter", "")
         checks_cfg      = reg.get("checks", {})
-        prev_week       = self._prev_week(run_week)
+        prev_week       = self._prev_week(run_week, date_format)
 
         results: List[CheckResult] = []
 
@@ -74,7 +80,7 @@ class ValidationEngine:
         if checks_cfg.get("freshness", {}).get("enabled", True):
             print(f"[engine] Running: freshness")
             results.append(
-                run_freshness_check(self.spark, dashboard_table, run_week, date_column)
+                run_freshness_check(self.spark, dashboard_table, run_week, date_column, row_filter)
             )
 
         # 2 — Per-metric: reconciliation + trend_sanity
@@ -88,7 +94,7 @@ class ValidationEngine:
                 results.append(
                     run_reconciliation_check(
                         self.spark, dashboard_table, source_table,
-                        metric, run_week, tolerance_pct, date_column,
+                        metric, run_week, tolerance_pct, date_column, row_filter,
                     )
                 )
 
@@ -98,7 +104,7 @@ class ValidationEngine:
                 results.append(
                     run_trend_sanity_check(
                         self.spark, dashboard_table,
-                        metric, run_week, prev_week, max_wow, date_column,
+                        metric, run_week, prev_week, max_wow, date_column, row_filter,
                     )
                 )
 
@@ -113,7 +119,7 @@ class ValidationEngine:
                     results.append(
                         run_parts_sum_check(
                             self.spark, dashboard_table, source_table,
-                            metric, run_week, pivot_col, tolerance_pct, date_column,
+                            metric, run_week, pivot_col, tolerance_pct, date_column, row_filter,
                         )
                     )
 
@@ -126,7 +132,7 @@ class ValidationEngine:
                         run_completeness_check(
                             self.spark, dashboard_table,
                             dim_cfg["name"], dim_cfg.get("expected_values", []),
-                            run_week, date_column,
+                            run_week, date_column, row_filter,
                         )
                     )
 
