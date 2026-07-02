@@ -91,13 +91,13 @@ def run_freshness_check(
         WHERE 1=1{extra}
     """)
 
-    status = Status.PASS if latest_week == expected_week else Status.FAIL
+    status = Status.PASS if str(latest_week) == str(expected_week) else Status.FAIL
     return CheckResult(
         check_name="freshness",
         metric="row_freshness",
         status=status,
-        expected=expected_week,
-        actual=latest_week,
+        expected=str(expected_week),
+        actual=str(latest_week),
         detail=f"Latest week in dashboard: {latest_week}",
     )
 
