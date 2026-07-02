@@ -25,6 +25,7 @@ class ValidationEngine:
 
     def __init__(self, spark, registry_path: str):
         self.spark = spark
+        self.registry_path = str(registry_path)
         path = Path(registry_path)
         if not path.exists():
             raise FileNotFoundError(f"Registry not found: {registry_path}")
@@ -157,7 +158,7 @@ class ValidationEngine:
             "dashboard":       reg["dashboard"],
             "run_week":        run_week,
             "run_timestamp":   datetime.utcnow().isoformat(timespec="seconds"),
-            "registry_path":   str(self.registry),
+            "registry_path":   self.registry_path,
             "summary":         {"total": len(results), "pass": n_pass, "drift": n_drift, "fail": n_fail},
             "results":         results,
             "overall_status":  overall,

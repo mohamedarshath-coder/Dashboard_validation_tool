@@ -45,9 +45,6 @@ class CheckResult:
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-_NON_BUDGET = "(data_type != 'Budget' OR data_type IS NULL)"
-
-
 def _where(date_column: str, run_week: str, row_filter: str = "") -> str:
     """Build a WHERE clause from date filter + optional row filter."""
     clause = f"{date_column} = '{run_week}'"
