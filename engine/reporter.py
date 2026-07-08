@@ -1,16 +1,11 @@
 """
-Reporter — builds Slack Block Kit messages and posts them.
+Reporter — builds Slack Block Kit messages, posts them, and generates PDF reports.
 
 PASS day  → single quiet green line.
 FAIL day  → full breakdown: per-check status, gap, severity, Claude triage.
-
-Also provides file reports:
-  save_csv_report()  → appends one row per check to a running history CSV
-  save_html_report() → self-contained, manager-friendly HTML summary
+PDF       → generated on every run, saved to /dbfs/tmp/validation_reports/.
 """
 
-import csv
-import html as html_mod
 import json
 import os
 from typing import Dict, List, Optional
@@ -133,155 +128,6 @@ def send_slack_report(run_result: Dict, webhook_url: str) -> None:
         print(f"[reporter] Slack POST failed: {resp.status_code} — {resp.text}")
 
 
-# ── CSV history log ────────────────────────────────────────────────────────────
-
-_CSV_COLUMNS = [
-    "run_timestamp", "run_week", "dashboard", "overall_status",
-    "check_name", "metric", "status", "severity",
-    "expected", "actual", "gap", "tolerance", "detail",
-]
-
-
-def save_csv_report(run_result: Dict, path: str = "validation_history.csv") -> str:
-    """
-    Append one row per check to a running CSV log. Each weekly run adds its
-    rows, so the file becomes a filterable history (pivot by dashboard, week,
-    check type, status) in Excel. Creates the file with a header on first run.
-    Returns the path written.
-    """
-    results: List[CheckResult] = run_result["results"]
-    file_exists = os.path.exists(path) and os.path.getsize(path) > 0
-
-    with open(path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(_CSV_COLUMNS)
-        for r in results:
-            writer.writerow([
-                run_result["run_timestamp"],
-                run_result["run_week"],
-                run_result["dashboard"],
-                run_result["overall_status"],
-                r.check_name,
-                r.metric,
-                r.status,
-                r.severity or "",
-                r.expected,
-                r.actual,
-                r.gap if r.gap is not None else "",
-                r.tolerance if r.tolerance is not None else "",
-                r.detail,
-            ])
-
-    print(f"[reporter] CSV history appended: {path} (+{len(results)} rows)")
-    return path
-
-
-# ── HTML report (manager-friendly) ─────────────────────────────────────────────
-
-_STATUS_COLOR = {Status.PASS: "#16a34a", Status.DRIFT: "#d97706", Status.FAIL: "#dc2626"}
-
-
-def save_html_report(run_result: Dict, path: Optional[str] = None) -> str:
-    """
-    Write a self-contained HTML report: overall verdict, summary tiles, a
-    colour-coded per-check table, and Claude's triage analysis when present.
-    No dependencies, opens in any browser, prints cleanly. Returns the path.
-    """
-    s         = run_result["summary"]
-    dashboard = run_result["dashboard"]
-    run_week  = run_result["run_week"]
-    overall   = run_result["overall_status"]
-    ts        = run_result["run_timestamp"]
-    results: List[CheckResult] = run_result["results"]
-    triage: str = run_result.get("triage_analysis", "") or ""
-
-    if path is None:
-        path = f"validation_report_{dashboard}_{run_week}.html"
-
-    esc = html_mod.escape
-    overall_color = _STATUS_COLOR[overall]
-
-    rows = []
-    for r in results:
-        color = _STATUS_COLOR[r.status]
-        gap = f"{r.gap:+,.0f}" if r.gap is not None else "—"
-        tol = f"±{r.tolerance}%" if r.tolerance is not None else "—"
-        rows.append(
-            f"<tr>"
-            f"<td>{esc(r.check_name)}</td>"
-            f"<td>{esc(r.metric)}</td>"
-            f"<td><span class='badge' style='background:{color}'>{esc(str(r.status))}</span></td>"
-            f"<td>{esc(str(r.severity) if r.severity else '—')}</td>"
-            f"<td class='num'>{esc(str(r.expected))}</td>"
-            f"<td class='num'>{esc(str(r.actual))}</td>"
-            f"<td class='num'>{esc(gap)}</td>"
-            f"<td class='num'>{esc(tol)}</td>"
-            f"<td class='detail'>{esc(r.detail)}</td>"
-            f"</tr>"
-        )
-
-    triage_html = ""
-    if triage:
-        triage_html = (
-            "<h2>Root-cause analysis</h2>"
-            f"<div class='triage'>{esc(triage).replace(chr(10), '<br>')}</div>"
-        )
-
-    doc = f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8">
-<title>Validation — {esc(dashboard)} — {esc(run_week)}</title>
-<style>
-  body {{ font-family: 'Segoe UI', system-ui, sans-serif; color: #1e293b;
-         max-width: 1080px; margin: 32px auto; padding: 0 24px; }}
-  h1 {{ font-size: 20px; margin-bottom: 2px; }}
-  .meta {{ color: #64748b; font-size: 13px; margin-bottom: 20px; }}
-  .verdict {{ display: inline-block; padding: 4px 14px; border-radius: 6px;
-              color: #fff; font-weight: 600; background: {overall_color}; }}
-  .tiles {{ display: flex; gap: 12px; margin: 18px 0 26px; }}
-  .tile {{ border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 22px;
-           text-align: center; }}
-  .tile b {{ display: block; font-size: 26px; }}
-  .tile span {{ font-size: 12px; color: #64748b; letter-spacing: .05em; }}
-  table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
-  th {{ text-align: left; padding: 8px 10px; background: #f1f5f9;
-        border-bottom: 2px solid #e2e8f0; font-size: 11px;
-        text-transform: uppercase; letter-spacing: .05em; color: #475569; }}
-  td {{ padding: 7px 10px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }}
-  td.num {{ font-variant-numeric: tabular-nums; white-space: nowrap; }}
-  td.detail {{ color: #64748b; }}
-  .badge {{ color: #fff; padding: 2px 9px; border-radius: 5px;
-            font-size: 11px; font-weight: 600; }}
-  .triage {{ border: 1px solid #e2e8f0; border-left: 4px solid #6366f1;
-             border-radius: 6px; padding: 14px 16px; font-size: 13px;
-             line-height: 1.6; background: #fafafa; }}
-  h2 {{ font-size: 15px; margin-top: 30px; }}
-  @media print {{ body {{ margin: 0; }} }}
-</style></head><body>
-<h1>Dashboard validation — {esc(dashboard)}</h1>
-<div class="meta">Week {esc(run_week)} · Pre-refresh check · {esc(ts)}</div>
-<div class="verdict">{esc(str(overall))}</div>
-<div class="tiles">
-  <div class="tile"><b style="color:#16a34a">{s['pass']}</b><span>PASS</span></div>
-  <div class="tile"><b style="color:#d97706">{s['drift']}</b><span>DRIFT</span></div>
-  <div class="tile"><b style="color:#dc2626">{s['fail']}</b><span>FAIL</span></div>
-  <div class="tile"><b>{s['total']}</b><span>TOTAL</span></div>
-</div>
-<table>
-<thead><tr><th>Check</th><th>Metric</th><th>Status</th><th>Severity</th>
-<th>Expected</th><th>Actual</th><th>Gap</th><th>Tolerance</th><th>Detail</th></tr></thead>
-<tbody>{''.join(rows)}</tbody>
-</table>
-{triage_html}
-</body></html>"""
-
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(doc)
-
-    print(f"[reporter] HTML report written: {path}")
-    return path
-
-
 # ── console output (for Databricks notebook runs / local testing) ─────────────
 
 def print_console_report(run_result: Dict) -> None:
@@ -316,3 +162,136 @@ def print_console_report(run_result: Dict) -> None:
             print(f"  {line}")
 
     print("═" * 70)
+
+
+# ── PDF report ────────────────────────────────────────────────────────────────
+
+def generate_pdf_report(run_result: Dict, output_dir: str = "/dbfs/tmp/validation_reports") -> str:
+    """Generate a PDF validation report and return the saved file path."""
+    try:
+        from fpdf import FPDF
+    except ImportError:
+        print("[reporter] fpdf2 not installed — skipping PDF. Run: pip install fpdf2")
+        return ""
+
+    dashboard = run_result["dashboard"]
+    run_week  = run_result["run_week"]
+    overall   = run_result["overall_status"]
+    summary   = run_result["summary"]
+    results: List[CheckResult] = run_result["results"]
+    triage    = run_result.get("triage_analysis", "")
+    timestamp = run_result.get("run_timestamp", "")
+
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, f"{dashboard}_{run_week}.pdf")
+
+    # colors
+    GREEN      = (34, 139, 34)
+    RED        = (200, 50, 50)
+    ORANGE     = (210, 120, 0)
+    WHITE      = (255, 255, 255)
+    DARK       = (30, 30, 30)
+    LIGHT_GRAY = (245, 245, 245)
+    MID_GRAY   = (150, 150, 150)
+
+    status_color = {"PASS": GREEN, "FAIL": RED, "DRIFT": ORANGE}
+    status_str   = str(overall).replace("Status.", "")
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+
+    # header bar
+    pdf.set_fill_color(*DARK)
+    pdf.rect(0, 0, 210, 28, "F")
+    pdf.set_font("Helvetica", "B", 15)
+    pdf.set_text_color(*WHITE)
+    pdf.set_xy(10, 7)
+    pdf.cell(0, 8, "Dashboard Validation Report", ln=True)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_xy(10, 18)
+    pdf.cell(0, 5, f"Generated: {timestamp}", ln=True)
+    pdf.set_text_color(*DARK)
+    pdf.ln(8)
+
+    # dashboard info
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, dashboard.replace("_", " ").title(), ln=True)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(0, 6, f"Run Week: {run_week}", ln=True)
+    pdf.ln(4)
+
+    # overall status box
+    color = status_color.get(status_str, DARK)
+    pdf.set_fill_color(*color)
+    pdf.set_text_color(*WHITE)
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 13, f"   Overall Status: {status_str}", ln=True, fill=True)
+    pdf.set_text_color(*DARK)
+    pdf.ln(5)
+
+    # summary counts
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(0, 6, "Summary", ln=True)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(55, 7, f"Total Checks: {summary['total']}", border=1)
+    pdf.set_text_color(*GREEN)
+    pdf.cell(45, 7, f"PASS: {summary['pass']}", border=1)
+    pdf.set_text_color(*ORANGE)
+    pdf.cell(45, 7, f"DRIFT: {summary['drift']}", border=1)
+    pdf.set_text_color(*RED)
+    pdf.cell(45, 7, f"FAIL: {summary['fail']}", border=1, ln=True)
+    pdf.set_text_color(*DARK)
+    pdf.ln(6)
+
+    # check details table
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(0, 6, "Check Details", ln=True)
+
+    pdf.set_fill_color(*DARK)
+    pdf.set_text_color(*WHITE)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.cell(32, 7, "Check",  border=1, fill=True)
+    pdf.cell(52, 7, "Metric", border=1, fill=True)
+    pdf.cell(18, 7, "Status", border=1, fill=True)
+    pdf.cell(88, 7, "Detail", border=1, fill=True, ln=True)
+    pdf.set_text_color(*DARK)
+
+    for i, r in enumerate(results):
+        row_fill = i % 2 == 0
+        pdf.set_fill_color(*(LIGHT_GRAY if row_fill else WHITE))
+
+        r_status = str(r.status).replace("Status.", "")
+        r_color  = status_color.get(r_status, DARK)
+
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(*DARK)
+        pdf.cell(32, 6, r.check_name,      border=1, fill=row_fill)
+        pdf.cell(52, 6, r.metric[:30],      border=1, fill=row_fill)
+        pdf.set_text_color(*r_color)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(18, 6, r_status,           border=1, fill=row_fill)
+        pdf.set_text_color(*DARK)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.cell(88, 6, (r.detail or "")[:55], border=1, fill=row_fill, ln=True)
+
+    pdf.ln(6)
+
+    # Claude triage section (FAIL/DRIFT only)
+    if triage:
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(0, 6, "Claude AI — Root Cause Analysis", ln=True)
+        pdf.set_fill_color(255, 250, 220)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.multi_cell(0, 5, triage.strip(), border=1, fill=True)
+        pdf.ln(4)
+
+    # footer
+    pdf.set_y(-15)
+    pdf.set_font("Helvetica", "I", 7)
+    pdf.set_text_color(*MID_GRAY)
+    pdf.cell(0, 5, "Generated by Dashboard Validation Framework  |  LatentView Analytics", align="C")
+
+    pdf.output(output_path)
+    print(f"[reporter] PDF saved: {output_path}")
+    return output_path
