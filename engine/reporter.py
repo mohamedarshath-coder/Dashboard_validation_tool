@@ -166,7 +166,7 @@ def print_console_report(run_result: Dict) -> None:
 
 # ── PDF report ────────────────────────────────────────────────────────────────
 
-def generate_pdf_report(run_result: Dict, output_dir: str = "/dbfs/tmp/validation_reports") -> str:
+def generate_pdf_report(run_result: Dict, output_dir: str = "/dbfs/FileStore/validation_reports") -> str:
     """Generate a PDF validation report and return the saved file path."""
     try:
         from fpdf import FPDF
